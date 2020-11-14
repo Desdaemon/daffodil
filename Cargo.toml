@@ -7,5 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+wither = "0.9.0-alpha.2"
+wither_derive = "0.9.0-alpha.2"
 bson = "1.1.0"
-cascade = "1.0.0"
+serde = { version = "1.0", features = [ "derive" ] }
+futures = "0.3.8"
+daffodil_derive = { path = "./daffodil_derive" }
+async-trait = "0.1.41"
+actix-rt = "1.1.1"
+
