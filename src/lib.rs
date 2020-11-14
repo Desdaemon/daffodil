@@ -4,6 +4,7 @@ pub mod aggregate;
 pub mod orm;
 pub mod prelude;
 pub use wither;
+pub use daffodil_derive;
 
 #[cfg(test)]
 mod tests {
