@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{parse::Parse, parse_macro_input, DeriveInput, *};
 
 /// Comments here!
-#[proc_macro_derive(Orm, attributes(has_many, belongs_to, has_one))]
+#[proc_macro_derive(Orm, attributes(has_many, belongs_to, has_one, timestamps))]
 pub fn relations(input: TokenStream) -> TokenStream {
   let ast = parse_macro_input!(input as DeriveInput);
   impl_relations(&ast).unwrap_or_else(|err| err.to_compile_error().into())

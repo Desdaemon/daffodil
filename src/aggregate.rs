@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use async_trait::async_trait;
 use futures::StreamExt;
 use wither::mongodb::{bson::Document, Database};
 use wither::{mongodb::options::AggregateOptions, Model};
@@ -26,7 +27,7 @@ use crate::{
 /// ```
 /// We can query Products and include Customers from another collection:
 /// ```
-/// let products = T::filter(doc! { "name": "Computer" })
+/// let products = Product::filter(vec![doc! { "$match": { "name": "Computer" } }])
 ///     .with::<Customer>()
 ///     .aggregate(db)
 ///     .await?;
@@ -66,7 +67,7 @@ impl<T> AggregatePipeline<T> {
     self.0.extend(stages);
     self
   }
-  pub fn with<C: Model>(self) -> Self
+  pub fn with<C>(self) -> Self
   where
     T: Relations<T, C>,
   {
@@ -114,3 +115,215 @@ pub trait ToAggregatePipeline<T: Model> {
     AggregatePipeline(stages.into().unwrap_or(Vec::new()), None, PhantomData)
   }
 }
+
+/// Quickhand for creating an aggregation pipeline.
+/// Only callable inside async functions returning `wither::Result`.
+/// Returns `Vec<T>`.
+/// ```
+/// let result = aggregate!(
+///   db,       // `&mongodb::Database`, required.
+///   None,     // `Vec<Document>` of aggregation pipeline stages, optional.
+///   None,     // `Vec<mongodb::options::AggregateOptions>`, optional.
+///   Source,   // `Model` type, required.
+///   // flat_map callback: Fn(Document) -> Option<T>, optional.
+///   |e| async move { T::instance_from_document(e).ok() },
+///   Target,   // Return type, Document by default, or inferred from the callback.
+/// );
+///
+/// let result_no_options = aggregate!(db, pipeline: .., Model);
+/// let result_no_pipeline = aggregate!(db, options: .., Model);
+/// ```
+#[macro_export]
+macro_rules! aggregate {
+  ($db:expr, $pipeline:expr, $options:expr, $input:ty, $func:expr, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, pipeline: $pipeline:expr, $input:ty, $func:expr, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, options: $options:expr, $input:ty, $func:expr, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<$type>>()
+      .await
+  };
+
+  ($db:expr, $pipeline:expr, $options:expr, $input:ty, $func:expr) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<_>>()
+      .await
+  };
+  ($db:expr, pipeline: $pipeline:expr, $input:ty, $func:expr) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<_>>()
+      .await
+  };
+  ($db:expr, options: $options:expr, $input:ty, $func:expr) => {
+    <$input>::collection($db)
+      .aggregate(None, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<_>>()
+      .await
+  };
+
+  ($db:expr, $pipeline:expr, $options:expr, $input:ty, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .map(|e| async move { <$type>::from(e) })
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, pipeline: $pipeline:expr, $input:ty, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .map(|e| async move { <$type>::from(e) })
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, options: $options:expr, $input:ty, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .map(|e| async move { <$type>::from(e) })
+      .collect::<Vec<$type>>()
+      .await
+  };
+
+  ($db:expr, $pipeline:expr, $options:expr, $input:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .collect::<Vec<_>>()
+      .await
+  };
+  ($db:expr, pipeline: $pipeline:expr, $input:ty) => {
+    <$input>::collection($db)
+      .aggregate($pipeline, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .collect::<Vec<_>>()
+      .await
+  };
+  ($db:expr, options: $options:expr, $input:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, $options)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .collect::<Vec<_>>()
+      .await
+  };
+
+  ($db:expr, $input:ty, $func:expr, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, $input:ty, $func:expr) => {
+    <$input>::collection($db)
+      .aggregate(None, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .filter_map($func)
+      .collect::<Vec<_>>()
+      .await
+  };
+  ($db:expr, $input:ty, $type:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .map(|e| async move { <$type>::from(e) })
+      .collect::<Vec<$type>>()
+      .await
+  };
+  ($db:expr, $input:ty) => {
+    <$input>::collection($db)
+      .aggregate(None, None)
+      .await?
+      .filter_map(|e| async move { e.ok() })
+      .collect::<Vec<_>>()
+      .await
+  };
+}
+
+/// Extension on Models to make use of the aggregation pipeline,
+/// which is essential to collection lookups.
+#[async_trait]
+pub trait Aggregate
+where
+  Self: Model,
+{
+  /// Create an aggregation pipeline returning Models.
+  async fn aggregate(
+    db: &Database,
+    pipeline: Vec<Document>,
+    options: Option<AggregateOptions>,
+  ) -> wither::Result<Vec<Self>> {
+    Ok(aggregate!(db, pipeline, options, Self, |e| async move {
+      Self::instance_from_document(e).ok()
+    }))
+  }
+
+  /// Create an aggregation pipeline returning MongoDB documents.
+  /// Useful for when you only need it to pass the items as-is.
+  async fn aggregate_raw(
+    db: &Database,
+    pipeline: Vec<Document>,
+    options: Option<AggregateOptions>,
+  ) -> wither::Result<Vec<Document>> {
+    Ok(aggregate!(db, pipeline, options, Self))
+  }
+
+  /// Create an aggregation pipeline returning MongoDB documents,
+  /// looking up all available relations in the process.
+  async fn aggregate_raw_with_all(
+    db: &Database,
+    pipeline: Vec<Document>,
+    options: Option<AggregateOptions>,
+  ) -> wither::Result<Vec<Document>>
+  where
+    Self: RelationsAll,
+  {
+    let mut pipeline = pipeline;
+    pipeline.extend(Self::with_all());
+    Ok(aggregate!(db, pipeline, options, Self))
+  }
+}
+
+impl<T: Model> Aggregate for T {}
+impl<T: Model> ToAggregatePipeline<T> for T {}

@@ -1,5 +1,5 @@
-pub use crate::aggregate::ToAggregatePipeline;
-pub use crate::orm::{Aggregate, ModelsExt, Relations, RelationsAll, With};
+pub use crate::aggregate::{Aggregate, ToAggregatePipeline};
+pub use crate::orm::{ModelsExt, Relations, RelationsAll, With};
 pub use async_trait::async_trait;
 pub use daffodil_derive::*;
 pub use futures::StreamExt;
