@@ -30,8 +30,8 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         let attr = field.attrs.iter().find(|e| {
           if let Some(segment) = e.path.segments.last() {
             return match segment.ident.to_string().as_str() {
-              // "has_many" | "belongs_to" | "has_one" | "timestamps" => true,
-              "timestamps" => true,
+              "has_many" | "belongs_to" | "has_one" | "timestamps" => true,
+              // "timestamps" => true,
               _ => false,
             };
           }
@@ -115,7 +115,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                       Ok(result)
                     }
                   }
-                  async fn _delete_rel(
+                  async fn _delete_rel<L: crate::private::IsLocal>(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -204,7 +204,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     )
                   }
                   #[doc = "belongs_to relationships can't call this method"]
-                  async fn _delete_rel(
+                  async fn _delete_rel<L: crate::private::IsLocal>(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -282,7 +282,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         .await?,
                     )
                   }
-                  async fn _delete_rel(
+                  async fn _delete_rel<L: crate::private::IsLocal>(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -509,18 +509,36 @@ impl Parse for BelongsToArgs {
 #[derive(Default)]
 struct HasArgs {
   cascade: Option<Ident>,
+  recursive: Option<Ident>,
 }
 impl Parse for HasArgs {
   fn parse(input: parse::ParseStream) -> Result<Self> {
+    let input = punctuated::Punctuated::<Expr, Token!(,)>::parse_terminated(input)?;
     if input.is_empty() {
       return Ok(HasArgs::default());
     }
-    let e: Ident = input.parse()?;
-    if e.eq("cascade") {
-      Ok(HasArgs { cascade: Some(e) })
-    } else {
-      Ok(HasArgs::default())
+    let mut cascade: Option<Ident> = None;
+    let mut recursive: Option<Ident> = None;
+    for input in input.iter() {
+      match input {
+        Expr::Path(path) => {
+          if let Some(ident) = path.path.get_ident() {
+            if ident.eq("cascade") {
+              cascade = Some(ident.clone());
+            } else if ident.eq("recursive") {
+              recursive = Some(ident.clone());
+            }
+          }
+        }
+        _ => {
+          return Err(syn::Error::new(
+            export::Span::call_site(),
+            "expected 'cascade', 'recursive'",
+          ))
+        }
+      }
     }
+    Ok(HasArgs { cascade, recursive })
   }
 }
 
