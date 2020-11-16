@@ -1,19 +1,19 @@
-#![feature(extend_one)]
-
 pub mod aggregate;
 pub mod orm;
 pub mod prelude;
+pub(crate) mod private;
 pub use daffodil_derive;
 pub use wither;
 
 #[cfg(test)]
 mod tests {
-
-  use wither::bson::Bson;
-
   use crate::orm::Timestamps;
   use crate::prelude::*;
+  use wither::bson::Bson;
 
+  /// relation|field|type
+  /// -|-|-|
+  /// has_many|movies|`Vec<Movie>`
   #[derive(Debug, Model, Orm, Serialize, Deserialize, Default, Clone)]
   #[model(collection_name = "people")]
   pub(crate) struct Person {
@@ -26,24 +26,21 @@ mod tests {
 
     pub name: String,
     pub achievements: Vec<String>,
+
+    #[timestamps(once)]
     created_at: Bson,
+
+    #[timestamps]
     updated_at: Bson,
-  }
-
-  impl Timestamps for Person {
-    fn timestamps() -> Bson {
-      Bson::Document(doc! { "updated_at": true })
-    }
-
-    fn timestamps_new() -> Bson {
-      Bson::Document(doc! { "created_at": true, "updated_at": true })
-    }
   }
 
   #[derive(Debug, Model, Orm, Serialize, Deserialize, Default, Clone)]
   pub(crate) struct Movie {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
     pub id: Option<ObjectId>,
+
+    pub name: String,
+    pub rating: i32,
 
     #[has_many]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,42 +54,24 @@ mod tests {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setting: Option<Setting>,
 
-    pub name: String,
-    pub rating: i32,
-
+    #[timestamps(once)]
     created_at: Bson,
+
+    #[timestamps]
     updated_at: Bson,
   }
 
-  impl Timestamps for Movie {
-    fn timestamps() -> Bson {
-      Bson::Document(doc! { "updated_at": true })
-    }
-
-    fn timestamps_new() -> Bson {
-      Bson::Document(doc! { "updated_at": true, "created_at": true })
-    }
-  }
-
-  #[derive(Debug, Model, Serialize, Deserialize, Default, Clone)]
+  #[derive(Debug, Orm, Model, Serialize, Deserialize, Default, Clone)]
   pub(crate) struct Setting {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
     pub id: Option<ObjectId>,
 
     pub name: String,
 
+    #[timestamps(once)]
     pub created_at: Bson,
+    #[timestamps]
     pub updated_at: Bson,
-  }
-
-  impl Timestamps for Setting {
-    fn timestamps() -> Bson {
-      Bson::Document(doc! { "updated_at": true })
-    }
-
-    fn timestamps_new() -> Bson {
-      Bson::Document(doc! { "updated_at": true, "created_at": true })
-    }
   }
 
   #[actix_rt::test]
@@ -127,7 +106,7 @@ mod tests {
       let staff = people
         .iter()
         .filter(|e| e.name == "Nobita" || e.name == "Doraemon")
-        .map(|e| e.clone())
+        .cloned()
         .collect::<Vec<_>>();
 
       let director = people.into_iter().find(|e| e.name == "Dekisugi");
@@ -166,17 +145,18 @@ mod tests {
         )
         .await?;
 
-      from_web.save_rel(&db, &staff, None).await?;
+      // from_web.save_rel(&db, &staff, None).await?;
 
       from_web.setting = Some(setting);
       from_web.director = director;
-      from_web.save_rels(&db, None).await?;
-      let movies = Movie::filter(None)
-        .with::<Vec<Person>>()
-        .with::<Setting>()
-        .aggregate(&db)
-        .await?;
-      println!("{}", serde_json::to_string_pretty(&movies).unwrap());
+      // from_web.save_rels(&db, None, None).await?;
+      // println!("{}", serde_json::to_string_pretty(&from_web).unwrap())
+      // let movies = Movie::filter(None)
+      //   .with::<Vec<Person>>()
+      //   .with::<Setting>()
+      //   .aggregate(&db)
+      //   .await?;
+      // println!("{}", serde_json::to_string_pretty(&movies).unwrap());
     }
 
     Ok(())

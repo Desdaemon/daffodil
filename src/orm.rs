@@ -1,6 +1,9 @@
 use wither::{
   bson::Bson,
-  mongodb::{options::UpdateOptions, results::DeleteResult},
+  mongodb::{
+    options::{DeleteOptions, UpdateOptions},
+    results::DeleteResult,
+  },
 };
 
 use crate::prelude::*;
@@ -8,24 +11,27 @@ use crate::prelude::*;
 /// The base on which relational mappings for MongoDB collections are defined.
 #[async_trait]
 pub trait Relations<This: ?Sized, Foreign> {
-  /// Prepares aggregation stages to join to other collections.
-  /// Do not manually implement this, instead use `#[derive(Orm)]` on your models.
-  ///
-  /// It is preferred to use `Self::with::<Foreign>()` whenever possible.
-  fn _with() -> Vec<Document>;
+  /// Private method, use `Self::with::<Model>()` instead.
+  fn _with<L: crate::private::IsLocal>() -> Vec<Document>;
 
   /// Updates the model's relations on the database using the specified
   /// `Foreign` document. This does not affect the local Model.
   ///
-  /// # Failure
+  /// **Failure**  
   /// Throws an error when either `self` or `other` contains a document without an ObjectId.
-  /// For this reason, it is recommended to persist the `self` and `other` before running this function.
+  /// For this reason, it is recommended to persist `self` and `other` before running this function.
   async fn save_rel(
     &self,
     db: &Database,
-    other: &Foreign,
+    other: Option<Foreign>,
     options: Option<UpdateOptions>,
   ) -> wither::Result<wither::mongodb::results::UpdateResult>;
+
+  /// Private method, use `self.delete_rel::<Model>(..)` instead.
+  async fn _delete_rel<L: crate::private::IsLocal>(
+    &self,
+    db: &Database,
+  ) -> wither::Result<wither::mongodb::results::DeleteResult>;
 }
 
 /// This trait exposes a single method from `Relations`, `with()`
@@ -36,16 +42,26 @@ pub trait Relations<This: ?Sized, Foreign> {
 ///   let pipeline = Movie::with::<Actor>();
 ///   let movies = aggregate!(&db, pipeline: pipeline, Movie);
 /// ```
+#[async_trait]
 pub trait With {
   fn with<T>() -> Vec<Document>
   where
     Self: Relations<Self, T>,
   {
-    Self::_with()
+    Self::_with::<crate::private::Local>()
+  }
+  async fn delete_rel<T>(
+    &self,
+    db: &Database,
+  ) -> wither::Result<wither::mongodb::results::DeleteResult>
+  where
+    Self: Relations<Self, T>,
+  {
+    Self::_delete_rel::<crate::private::Local>(self, db).await
   }
 }
 
-impl<T> With for T {}
+impl<T: Model> With for T {}
 
 pub trait Timestamps {
   /// Returns update documents for timestamps not marked with `once`
@@ -63,8 +79,25 @@ pub trait RelationsAll {
   /// Use this over `with()` when you just need the model and its dependents.
   fn with_all() -> Vec<Document>;
 
-  /// Updates all relations to the database using data from `self`. The complete version of `save_rel()`.
-  async fn save_rels(&self, db: &Database, options: Option<UpdateOptions>) -> wither::Result<()>;
+  /// Saves `self` and updates the model's relational data.
+  ///
+  /// **Params**
+  /// - `filter`: The filter document for saving `self`.
+  /// - `options`: Options for saving relations.
+  async fn save_rels(
+    &self,
+    db: &Database,
+    filter: Option<Document>,
+    options: Option<UpdateOptions>,
+  ) -> wither::Result<()>
+  where
+    Self: Clone;
+
+  /// Delete dependencies marked as `cascade` and deletes `self`.
+  async fn delete_rels(
+    &self,
+    db: &Database,
+  ) -> wither::Result<Vec<wither::mongodb::results::DeleteResult>>;
 }
 
 /// Extensions on Model vectors/iterators.
@@ -77,7 +110,7 @@ pub trait ModelsExt {
   async fn delete(
     &self,
     db: &Database,
-    options: Option<wither::mongodb::options::DeleteOptions>,
+    options: Option<DeleteOptions>,
   ) -> wither::Result<DeleteResult>;
 }
 
@@ -99,7 +132,7 @@ impl<T: Model + Send + Sync> ModelsExt for [T] {
   async fn delete(
     &self,
     db: &Database,
-    options: Option<wither::mongodb::options::DeleteOptions>,
+    options: Option<DeleteOptions>,
   ) -> wither::Result<DeleteResult> {
     let ids = self.iter().filter_map(|e| e.id()).collect::<Vec<_>>();
     Ok(
@@ -119,7 +152,7 @@ impl<T: Model + Send + Sync> ModelsExt for Vec<T> {
   async fn delete(
     &self,
     db: &Database,
-    options: Option<wither::mongodb::options::DeleteOptions>,
+    options: Option<DeleteOptions>,
   ) -> wither::Result<DeleteResult> {
     self[..].delete(db, options).await
   }

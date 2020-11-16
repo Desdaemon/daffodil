@@ -58,9 +58,8 @@ impl<T> AggregatePipeline<T> {
     )
   }
   /// Add a single stage to the pipeline.
-  /// It is recommended to use `add_stages()` over this whenever possible.
   pub fn add_stage(mut self, stage: Document) -> Self {
-    self.0.extend_one(stage);
+    self.0.extend(Some(stage));
     self
   }
   pub fn add_stages(mut self, stages: Vec<Document>) -> Self {
@@ -69,7 +68,7 @@ impl<T> AggregatePipeline<T> {
   }
   pub fn with<C>(self) -> Self
   where
-    T: Relations<T, C>,
+    T: Model + Relations<T, C>,
   {
     self.add_stages(T::with())
   }
