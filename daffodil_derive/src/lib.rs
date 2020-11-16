@@ -87,7 +87,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                   async fn save_rel(
                     &self,
                     db: &Database,
-                    other: Option<Vec<#ty>>,
+                    other: &Option<Vec<#ty>>,
                     options: Option<wither::mongodb::options::UpdateOptions>,
                   ) -> wither::Result<wither::mongodb::results::UpdateResult> {
                     let pid = self
@@ -134,9 +134,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 docs.extend(Self::with::<Vec<#ty>>());
               });
               save_rels.extend(quote! {
-                if let Some(rel) = &self.#name {
-                  self.save_rel(db, rel, options.clone()).await?;
-                }
+                self.save_rel(db, &self.#name, options.clone()).await?;
               });
               if let Some(_) = args.cascade {
                 delete_rels.extend(quote! {
@@ -181,7 +179,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                   async fn save_rel(
                     &self,
                     db: &Database,
-                    other: Option<#ty>,
+                    other: &Option<#ty>,
                     options: Option<wither::mongodb::options::UpdateOptions>,
                   ) -> wither::Result<wither::mongodb::results::UpdateResult> {
                     let sid = self
@@ -192,9 +190,9 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         let oid = other
                           .id()
                           .ok_or(wither::WitherError::ModelIdRequiredForOperation)?;
-                        doc! { "$set": { #str_name_lowercase: oid } }
+                        doc! { "$set": { #name_id: oid } }
                       } else {
-                        doc! { "$unset": { #str_name_lowercase: "" } }
+                        doc! { "$unset": { #name_id: "" } }
                       }
                     };
                     Ok(
@@ -216,13 +214,11 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 docs.extend(Self::with::<#ty>());
               });
               save_rels.extend(quote! {
-                if let Some(rel) = &self.director {
-                  self.save_rel(db, rel, options.clone()).await?;
-                }
+                self.save_rel(db, &self.#name, options.clone()).await?;
               });
               before_save_rels.extend(quote! {
                 #name: None,
-              })
+              });
             }
             "has_one" => {
               require_serde_omit_none(field, "has_one")?;
@@ -260,7 +256,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                   async fn save_rel(
                     &self,
                     db: &Database,
-                    other: Option<#ty>,
+                    other: &Option<#ty>,
                     options: Option<wither::mongodb::options::UpdateOptions>,
                   ) -> wither::Result<wither::mongodb::results::UpdateResult> {
                     let sid = self
@@ -301,51 +297,81 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 docs.extend(Self::with::<#ty>());
               });
               save_rels.extend(quote! {
-                if let Some(rel) = &self.#name {
-                  self.save_rel(db, rel, options.clone()).await?;
-                }
+                self.save_rel(db, &self.#name, options.clone()).await?;
               });
               if let Some(_) = args.cascade {
                 delete_rels.extend(quote! {
                   self.delete_rel::<#ty>(db).await?,
-                })
+                });
               }
               before_save_rels.extend(quote! {
                 #name: None,
-              })
+              });
             }
             "timestamps" => {
               let opts: TimestampsOpts = attr.parse_args().unwrap_or_default();
               if let None = opts.once {
-                timestamps.extend(quote! { #name_quoted: true, })
+                timestamps.extend(quote! { #name_quoted: true, });
               }
-              timestamps_all.extend(quote! { #name_quoted: true, })
+              timestamps_all.extend(quote! { #name_quoted: true, });
             }
             _ => {}
           }
         }
       }
-      let delete_rels_final = {
-        if delete_rels.is_empty() {
+      let delete_rels_final = quote! {
+        async fn delete_rels(
+          &self,
+          db: &Database,
+        ) -> wither::Result<Vec<wither::mongodb::results::DeleteResult>> {
+          Ok(
+            [
+              #delete_rels
+              self.delete(db).await?,
+            ].into()
+          )
+        }
+      };
+      let timestamps_final = {
+        if timestamps.is_empty() && timestamps_all.is_empty() {
           TokenStream2::new()
         } else {
           quote! {
-            async fn delete_rels(
-              &self,
-              db: &Database,
-            ) -> wither::Result<Vec<wither::mongodb::results::DeleteResult>> {
-              Ok(
-                vec![
-                  #delete_rels
-                  self.delete(db).await?,
-                ]
-              )
+            impl Timestamps for #str_name {
+              fn timestamps() -> Bson {
+                Bson::Document(doc! {
+                  #timestamps
+                })
+              }
+              fn timestamps_new() -> Bson {
+                Bson::Document(doc! {
+                  #timestamps_all
+                })
+              }
             }
           }
         }
       };
+      let update_timestamps = {
+        if timestamps_final.is_empty() {
+          TokenStream2::new()
+        } else {
+          quote! {
+            let update_doc = match self.id() {
+              None => Self::timestamps_new(),
+              _ => Self::timestamps()
+            };
+            let temp = temp.update(
+              db,
+              Some(doc! {}),
+              doc! { "$currentDate": update_doc },
+              None
+            ).await?;
+          }
+        }
+      };
       let relations_all_final = {
-        if (with_all.is_empty() && save_rels.is_empty()) || delete_rels_final.is_empty() {
+        if with_all.is_empty() && save_rels.is_empty() {
           TokenStream2::new()
         } else {
           quote! {
@@ -357,7 +383,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 docs
               }
               async fn save_rels(
-                &self,
+                &mut self,
                 db: &Database,
                 filter: Option<Document>,
                 options: Option<wither::mongodb::options::UpdateOptions>,
@@ -365,41 +391,21 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
               where
                 Self: Clone,
               {
-                #save_rels
-                #str_name {
+                let mut temp = #str_name {
                   #before_save_rels
                   ..self.clone()
-                }
-                .save(&db, filter)
-                .await
+                };
+                temp.save(db, filter).await?;
+                #update_timestamps
+                self.set_id(temp.id().expect("save_rels failed to persist the interim document"));
+                #save_rels
+                Ok(())
               }
               #delete_rels_final
             }
           }
         }
       };
-      let timestamps_final = {
-        if timestamps.is_empty() && timestamps_all.is_empty() {
-          quote! {}
-        } else {
-          quote! {
-            impl Timestamps for #str_name {
-              fn timestamps() -> Bson {
-                Bson::Document(doc! {
-                  #timestamps
-                })
-              }
-
-              fn timestamps_new() -> Bson {
-                Bson::Document(doc! {
-                  #timestamps_all
-                })
-              }
-            }
-          }
-        }
-      };
-
       let finaldoc = quote! {
         #relations
         #relations_all_final

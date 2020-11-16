@@ -74,91 +74,101 @@ mod tests {
     pub updated_at: Bson,
   }
 
-  #[actix_rt::test]
-  async fn test_relations() -> wither::Result<()> {
+  async fn setup_db() -> wither::Result<Database> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("debug"));
     let client = wither::mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
     let db = client.database("daffodil_test");
     db.drop(None).await?;
+    Ok(db)
+  }
 
-    // Create
-    let mut people = [
-      "Doraemon", "Nobita", "Jaian", "Dekisugi", "Shizuka", "Tsuneo",
-    ]
-    .iter()
-    .map(|name| Person {
-      name: String::from(*name),
-      ..Person::default()
-    })
-    .collect::<Vec<_>>();
-    people.save(&db, None).await?;
+  async fn test_save_rel(db: &Database) -> wither::Result<()> {
+    let movie = Movie {
+      name: "Titanic".into(),
+      ..Movie::default()
+    }
+    .persist_with(db)
+    .await?;
 
-    let mut movies = (0..=9)
-      .map(|e: u16| Movie {
-        name: format!("Movie {}", e),
-        ..Movie::default()
+    let mut staff = ["Titanic Staff 1", "Titanic Staff 2"]
+      .iter()
+      .map(|name| Person {
+        name: String::from(*name),
+        ..Person::default()
       })
       .collect::<Vec<_>>();
-    movies.save(&db, None).await?;
+    staff.save(db, None).await?;
 
-    // Update
-    {
-      let staff = people
-        .iter()
-        .filter(|e| e.name == "Nobita" || e.name == "Doraemon")
-        .cloned()
-        .collect::<Vec<_>>();
+    movie.save_rel(db, &Some(staff), None).await?;
+    let movie = Movie::filter(vec![doc! { "$match": {"_id": movie.id().unwrap()}}])
+      .with::<Vec<Person>>()
+      .aggregate(db)
+      .await?;
+    println!("test_save_rel results: {:#?}", movie);
 
-      let director = people.into_iter().find(|e| e.name == "Dekisugi");
-
-      let movie = movies
-        .into_iter()
-        .find(|e| e.name == "Movie 0")
-        .expect("Failed to get movie named 'Movie 0' from local");
-
-      let mut setting = Setting {
-        name: "Prehistoric".into(),
-        ..Setting::default()
-      };
-      setting.save(&db, None).await?;
-      let setting = setting
-        .update(
-          &db,
-          None,
-          doc! { "$currentDate": Setting::timestamps_new() },
-          None,
-        )
-        .await?;
-
-      let from_web = Movie {
-        name: "Bad Movie Name".into(),
-        rating: -100,
-        id: movie.id,
-        ..Movie::default()
-      };
-      let mut from_web = from_web
-        .update(
-          &db,
-          None,
-          doc! { "$currentDate" : Movie::timestamps() },
-          None,
-        )
-        .await?;
-
-      // from_web.save_rel(&db, &staff, None).await?;
-
-      from_web.setting = Some(setting);
-      from_web.director = director;
-      // from_web.save_rels(&db, None, None).await?;
-      // println!("{}", serde_json::to_string_pretty(&from_web).unwrap())
-      // let movies = Movie::filter(None)
-      //   .with::<Vec<Person>>()
-      //   .with::<Setting>()
-      //   .aggregate(&db)
-      //   .await?;
-      // println!("{}", serde_json::to_string_pretty(&movies).unwrap());
+    Ok(())
+  }
+  async fn test_save_rels(db: &Database) -> wither::Result<()> {
+    let director = Person {
+      name: "Titanic Director".into(),
+      ..Person::default()
     }
+    .persist_with(db)
+    .await?;
 
+    let setting = Setting {
+      name: "Atlantic Ocean".into(),
+      ..Setting::default()
+    }
+    .persist(db)
+    .await?;
+
+    let mut movie = Movie::filter(vec![doc! {"$match": {"name": "Titanic"}}])
+      .with::<Vec<_>>()
+      .aggregate(db)
+      .await?
+      .first()
+      .cloned()
+      .expect("Expected to retrieve exactly one movie named 'Titanic'");
+
+    movie.director = Some(director);
+    movie.setting = Some(setting);
+    movie.name = String::from("Groundhog Day");
+    movie.rating = 100;
+    movie.save_rels(db, None, None).await?;
+    println!("test_save_rels results: {:#?}", movie);
+
+    Ok(())
+  }
+  async fn test_delete_rel(db: &Database) -> wither::Result<()> {
+    let movie = Movie::filter(vec![doc! {"$match": {"name": "Titanic"}}])
+      .with_all()
+      .aggregate(db)
+      .await?
+      .first()
+      .cloned()
+      .expect("Expected to retrieve exactly one movie named 'Titanic'");
+    movie.delete_rel::<Setting>(db).await?;
+
+    assert_eq!(
+      0,
+      Setting::collection(db).count_documents(None, None).await?
+    );
+
+    Ok(())
+  }
+  async fn test_delete_rels(db: &Database) -> wither::Result<()> {
+    Ok(())
+  }
+  #[actix_rt::test]
+  async fn test_relations() -> wither::Result<()> {
+    let db = setup_db().await?;
+    test_save_rel(&db).await.expect("test_save_rel failed");
+    test_save_rels(&db).await.expect("test_save_rels failed");
+    test_delete_rel(&db).await.expect("test_delete_rel failed");
+    test_delete_rels(&db)
+      .await
+      .expect("test_delete_rels failed");
     Ok(())
   }
 }
