@@ -1,14 +1,12 @@
 pub mod aggregate;
 pub mod orm;
 pub mod prelude;
-pub(crate) mod private;
-pub use daffodil_derive;
-pub use wither;
 
 #[cfg(test)]
 mod tests {
   use crate::orm::Timestamps;
   use crate::prelude::*;
+  use serde::{Deserialize, Serialize};
   use wither::bson::Bson;
 
   /// relation|field|type

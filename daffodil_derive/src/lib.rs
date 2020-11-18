@@ -25,7 +25,6 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
       for field in named_fields.named.iter() {
         let name = &field.ident;
-        let ty: &syn::Type;
 
         let attr = field.attrs.iter().find(|e| {
           if let Some(segment) = e.path.segments.last() {
@@ -51,30 +50,30 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
           {
             "has_many" => {
               require_serde_omit_none(field, "has_many")?;
-              let err = syn::Error::new(
+              let err = Err(syn::Error::new(
                 name.span(),
                 format!("has_many requires an Option<Vec<Model>> field"),
-              );
+              ));
               let args: HasArgs = attr.parse_args().unwrap_or_default();
-              let unwrapped = SingleParamType::from(&field.ty).ok_or(err.clone())?;
-              if unwrapped.0.eq("Option") {
-                let unwrapped = SingleParamType::from(unwrapped.1).ok_or(err.clone())?;
-                if unwrapped.0.eq("Vec") {
-                  if let None = SingleParamType::from(unwrapped.1) {
-                    ty = unwrapped.1;
-                  } else {
-                    return Err(err);
-                  }
-                } else {
-                  return Err(err);
+              let ty = match SingleParamType::from(&field.ty) {
+                Some(spt) if spt.0.eq("Option") => spt.1,
+                Some(_) | None => {
+                  return err;
                 }
-              } else {
-                return Err(err);
+              };
+              let ty = match SingleParamType::from(ty) {
+                Some(spt) if spt.0.eq("Vec") => spt.1,
+                Some(_) | None => {
+                  return err;
+                }
+              };
+              if let Some(_) = SingleParamType::from(ty) {
+                return err;
               }
               relations.extend(quote! {
                 #[async_trait]
                 impl Relations<Self, Vec<#ty>> for #str_name {
-                  fn _with<L: crate::private::IsLocal>() -> Vec<Document> {
+                  fn _with() -> Vec<Document> {
                     vec![doc! {
                       "$lookup": {
                         "from": #ty::COLLECTION_NAME,
@@ -115,7 +114,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                       Ok(result)
                     }
                   }
-                  async fn _delete_rel<L: crate::private::IsLocal>(
+                  async fn _delete_rel(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -147,23 +146,25 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
             "belongs_to" => {
               require_serde_omit_none(field, "belongs_to")?;
-              let err = syn::Error::new(name.span(), "belongs_to requires an Option<Model> field");
+              let err = Err(syn::Error::new(
+                name.span(),
+                "belongs_to requires an Option<Model> field",
+              ));
               let args: BelongsToArgs = attr.parse_args().unwrap_or_default();
-              let unwrapped = SingleParamType::from(&field.ty).ok_or(err.clone())?;
-              if unwrapped.0.eq("Option") {
-                if let None = SingleParamType::from(unwrapped.1) {
-                  ty = unwrapped.1;
-                } else {
-                  return Err(err);
+              let ty = match SingleParamType::from(&field.ty) {
+                Some(spt) if spt.0.eq("Option") => spt.1,
+                Some(_) | None => {
+                  return err;
                 }
-              } else {
-                return Err(err);
+              };
+              if let Some(_) = SingleParamType::from(ty) {
+                return err;
               }
               let name_id = format!("{}_id", args.local_field.unwrap_or(name.clone()));
               relations.extend(quote! {
                 #[async_trait]
                 impl Relations<Self, #ty> for #str_name {
-                  fn _with<L: crate::private::IsLocal>() -> Vec<Document> {
+                  fn _with() -> Vec<Document> {
                     vec![
                       doc! {
                         "$lookup": {
@@ -202,7 +203,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     )
                   }
                   #[doc = "belongs_to relationships can't call this method"]
-                  async fn _delete_rel<L: crate::private::IsLocal>(
+                  async fn _delete_rel(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -222,25 +223,25 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
             "has_one" => {
               require_serde_omit_none(field, "has_one")?;
-              let err = syn::Error::new(
+              let err = Err(syn::Error::new(
                 name.span(),
-                format!("has_one requires an Option<Model> field. If this creates an infinite struct, remove the belongs_to relation from the child struct."),
-              );
+                r#"has_one requires an Option<Model> field.
+                If this creates an infinite struct, remove the belongs_to relation from the child struct."#,
+              ));
               let args: HasArgs = attr.parse_args().unwrap_or_default();
-              let unwrapped = SingleParamType::from(&field.ty).ok_or(err.clone())?;
-              if unwrapped.0.eq("Option") {
-                if let None = SingleParamType::from(unwrapped.1) {
-                  ty = unwrapped.1;
-                } else {
-                  return Err(err);
+              let ty = match SingleParamType::from(&field.ty) {
+                Some(spt) if spt.0.eq("Option") => spt.1,
+                Some(_) | None => {
+                  return err;
                 }
-              } else {
-                return Err(err);
+              };
+              if let Some(_) = SingleParamType::from(ty) {
+                return err;
               }
               relations.extend(quote! {
                 #[async_trait]
                 impl Relations<Self, #ty> for #str_name {
-                  fn _with<L: crate::private::IsLocal>() -> Vec<Document> {
+                  fn _with() -> Vec<Document> {
                     vec![
                       doc! {
                         "$lookup": {
@@ -278,7 +279,7 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         .await?,
                     )
                   }
-                  async fn _delete_rel<L: crate::private::IsLocal>(
+                  async fn _delete_rel(
                     &self,
                     db: &Database,
                   ) -> wither::Result<wither::mongodb::results::DeleteResult> {
@@ -338,13 +339,13 @@ fn impl_relations(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         } else {
           quote! {
             impl Timestamps for #str_name {
-              fn timestamps() -> Bson {
-                Bson::Document(doc! {
+              fn timestamps() -> wither::bson::Bson {
+                wither::bson::Bson::Document(doc! {
                   #timestamps
                 })
               }
-              fn timestamps_new() -> Bson {
-                Bson::Document(doc! {
+              fn timestamps_new() -> wither::bson::Bson {
+                wither::bson::Bson::Document(doc! {
                   #timestamps_all
                 })
               }

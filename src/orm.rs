@@ -13,7 +13,7 @@ use crate::prelude::*;
 pub trait Relations<This: ?Sized, Foreign> {
   /// Internal method, use `Self::with::<Model>()` instead.
   #[doc(hidden)]
-  fn _with<L: crate::private::IsLocal>() -> Vec<Document>;
+  fn _with() -> Vec<Document>;
 
   /// Updates the model's relations on the database using the specified
   /// `Foreign` document. This does not affect the local Model.
@@ -30,7 +30,7 @@ pub trait Relations<This: ?Sized, Foreign> {
 
   /// Internal method, use `self.delete_rel::<Model>(..)` instead.
   #[doc(hidden)]
-  async fn _delete_rel<L: crate::private::IsLocal>(
+  async fn _delete_rel(
     &self,
     db: &Database,
   ) -> wither::Result<wither::mongodb::results::DeleteResult>;
@@ -50,7 +50,7 @@ pub trait With {
   where
     Self: Relations<Self, T>,
   {
-    Self::_with::<crate::private::Local>()
+    Self::_with()
   }
   async fn delete_rel<T>(
     &self,
@@ -59,7 +59,7 @@ pub trait With {
   where
     Self: Relations<Self, T>,
   {
-    Self::_delete_rel::<crate::private::Local>(self, db).await
+    Self::_delete_rel(self, db).await
   }
 }
 
